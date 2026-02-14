@@ -1,0 +1,16 @@
+requests
+pandas
+beautifulsoup4
+selenium
+webdriver-manager
+lxml
+uncurl
+fake-useragent
+soccerdata
+html5lib
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+python-dotenv
+apscheduler
