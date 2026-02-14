@@ -1,21 +1,14 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fbref.fbref_player_data import load_fbref_player_data
 
-app = FastAPI(title="Sports Data API")
-
-# Allow Angular frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI()
 
 @app.get("/")
-def root():
-    return {"status": "Sports Data Backend Running"}
+def home():
+return {"status": "API is running"}
 
 @app.get("/players")
-def get_players():
-    return {"message": "Players endpoint working"}
+def players():
+url = "https://fbref.com/en/comps/Big5/stats/players/Big-5-European-Leagues-Stats"
+df = load_fbref_player_data(url)
+return df.head(20).to_dict(orient="records")

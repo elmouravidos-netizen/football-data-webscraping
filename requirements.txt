@@ -14,3 +14,12 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 apscheduler
+fastapi
+uvicorn
+pandas
+requests
+beautifulsoup4
+lxml
+selenium
+webdriver-manager
+
