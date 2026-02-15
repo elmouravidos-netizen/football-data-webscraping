@@ -6,10 +6,11 @@ app = FastAPI()
 def home():
     return {"status": "API is running"}
 
+
 @app.get("/players")
-def players():
-return [
-    {"name": "Lionel Messi", "club": "Inter Miami"},
-    {"name": "Cristiano Ronaldo", "club": "Al Nassr"},
-    {"name": "Kylian Mbappe", "club": "PSG"}
-]
+def get_players():
+    return [
+        {"name": "Lionel Messi", "team": "Inter Miami"},
+        {"name": "Cristiano Ronaldo", "team": "Al Nassr"},
+        {"name": "Kylian Mbappe", "team": "Real Madrid"}
+    ]
