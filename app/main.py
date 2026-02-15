@@ -6,21 +6,23 @@ app = FastAPI()
 origins = ["*"]
 
 app.add_middleware(
-CORSMiddleware,
-allow_origins=origins,
-allow_credentials=True,
-allow_methods=["*"],
-allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/")
 def home():
-return {"status": "API is running"}
+    # This must be indented (usually 4 spaces)
+    return {"status": "API is running"}
 
 @app.get("/players")
 def get_players():
-return [
-{"name": "Lionel Messi", "team": "Inter Miami"},
-{"name": "Cristiano Ronaldo", "team": "Al Nassr"},
-{"name": "Kylian Mbappe", "team": "Real Madrid"}
-]
+    # This block must also be indented
+    return [
+        {"name": "Lionel Messi", "team": "Inter Miami"},
+        {"name": "Cristiano Ronaldo", "team": "Al Nassr"},
+        {"name": "Kylian Mbappe", "team": "Real Madrid"}
+    ]
