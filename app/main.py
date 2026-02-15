@@ -9,7 +9,7 @@ def home():
 @app.get("/players")
 def players():
 return [
-{"name": "Lionel Messi", "club": "Inter Miami"},
-{"name": "Cristiano Ronaldo", "club": "Al Nassr"},
-{"name": "Kylian Mbappe", "club": "PSG"}
+    {"name": "Lionel Messi", "club": "Inter Miami"},
+    {"name": "Cristiano Ronaldo", "club": "Al Nassr"},
+    {"name": "Kylian Mbappe", "club": "PSG"}
 ]
