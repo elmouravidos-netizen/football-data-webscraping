@@ -53,25 +53,27 @@ def get_matches():
             "date": "2026-02-08"
         }
     ]
+
 @app.get("/realplayers")
 def real_players():
-    # Everything below this line MUST be indented 4 spaces
-    url = "https://www.espn.com/nfl/freeagents"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    try:
-        r = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(r.text, "html.parser")
-        players = []
-        
-        # Scraping logic
-        for row in soup.select("tbody tr")[:10]:
-            cols = row.find_all("td")
-            if len(cols) > 1:
-                players.append({
-                    "name": cols[0].text.strip(),
-                    "position": cols[1].text.strip()
-                })
-        return players
-    except Exception as e:
-        return [{"name": "Error", "position": str(e)}]
+url = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes?limit=20"
+
+```
+try:
+    r = requests.get(url, timeout=8)
+    data = r.json()
+
+    players = []
+
+    for athlete in data.get("items", []):
+        players.append({
+            "name": athlete.get("displayName"),
+            "position": athlete.get("position", {}).get("abbreviation", "N/A"),
+            "team": athlete.get("team", {}).get("displayName", "Free Agent")
+        })
+
+    return players
+
+except Exception as e:
+    return [{"error": str(e)}]
+```
