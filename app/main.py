@@ -56,24 +56,23 @@ def get_matches():
 
 @app.get("/realplayers")
 def real_players():
-url = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes?limit=20"
-
-```
-try:
-    r = requests.get(url, timeout=8)
-    data = r.json()
-
-    players = []
-
-    for athlete in data.get("items", []):
-        players.append({
-            "name": athlete.get("displayName"),
-            "position": athlete.get("position", {}).get("abbreviation", "N/A"),
-            "team": athlete.get("team", {}).get("displayName", "Free Agent")
-        })
-
-    return players
-
-except Exception as e:
-    return [{"error": str(e)}]
-```
+    # Line 59: This must be indented 4 spaces
+    url = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes?limit=20"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        data = r.json()
+        players = []
+        
+        # ESPN API usually returns a list of sports/athletes
+        # This parses the common ESPN athlete API format
+        for athlete in data.get('sports', [{}])[0].get('leagues', [{}])[0].get('athletes', []):
+            players.append({
+                "name": athlete.get('displayName'),
+                "position": athlete.get('position', {}).get('abbreviation'),
+                "team": athlete.get('team', {}).get('displayName', 'Free Agent')
+            })
+        return players
+    except Exception as e:
+        return [{"name": "Error fetching data", "position": str(e)}]
