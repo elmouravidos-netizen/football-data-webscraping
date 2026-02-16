@@ -48,33 +48,25 @@ def get_matches():
             "date": "2026-02-08"
         }
     ]
-import requests
-from bs4 import BeautifulSoup
-
 @app.get("/realplayers")
 def real_players():
-url = "https://www.espn.com/nfl/freeagents"
-
-```
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
-
-r = requests.get(url, headers=headers)
-soup = BeautifulSoup(r.text, "html.parser")
-
-players = []
-
-for row in soup.select("tbody tr")[:10]:
-    cols = row.find_all("td")
-    if len(cols) > 1:
-        name = cols[0].text.strip()
-        position = cols[1].text.strip()
-
-        players.append({
-            "name": name,
-            "position": position
-        })
-
-return players
-```
+    # Everything below this line MUST be indented 4 spaces
+    url = "https://www.espn.com/nfl/freeagents"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(r.text, "html.parser")
+        players = []
+        
+        # Scraping logic
+        for row in soup.select("tbody tr")[:10]:
+            cols = row.find_all("td")
+            if len(cols) > 1:
+                players.append({
+                    "name": cols[0].text.strip(),
+                    "position": cols[1].text.strip()
+                })
+        return players
+    except Exception as e:
+        return [{"name": "Error", "position": str(e)}]
