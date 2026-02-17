@@ -1,11 +1,11 @@
 import requests
-from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from bs4 import BeautifulSoup, Comment  # Added Comment import
 
 app = FastAPI()
 
-# Enable CORS
+# Enable CORS for your React Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,7 +16,7 @@ app.add_middleware(
 
 @app.get("/")
 def home():
-    return {"status": "API is running", "current_date": "2026-02-17"}
+    return {"status": "API is running", "date": "2026-02-17"}
 
 @app.get("/players")
 def get_players():
@@ -36,35 +36,54 @@ def get_matches():
 
 @app.get("/realplayers")
 def real_players():
-    url = "https://fbref.com"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    
+    # ALL code below is now correctly indented
+    url = "https://fbref.com/en/comps/21/stats/NFL-Stats"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
     try:
-        r = requests.get(url, headers=headers, timeout=15)
+        r = requests.get(url, headers=headers, timeout=20)
         soup = BeautifulSoup(r.text, "html.parser")
-        players = []
 
-        # Find the specific NFL stats table
-        table = soup.find("table", {"id": "stats_standard"})
+        # FBref hides tables inside comments to stop scrapers
+        comments = soup.find_all(string=lambda text: isinstance(text, Comment))
+
+        table = None
+        for comment in comments:
+            if "table" in comment:
+                comment_soup = BeautifulSoup(comment, "html.parser")
+                table = comment_soup.find("table")
+                if table:
+                    break
+
         if not table:
-            return [{"error": "Stats table not found on FBref"}]
+            # Fallback: check if the table is NOT commented out
+            table = soup.find("table")
+            
+        if not table:
+            return [{"error": "Still no table found"}]
 
+        players = []
         rows = table.find("tbody").find_all("tr")
-        for row in rows[:20]:
-            # Skip the middle header rows FBref adds
+
+        for row in rows[:25]:
+            # Skip rows that are just headers
             if "thead" in row.get("class", []):
                 continue
                 
-            name_cell = row.find("td", {"data-stat": "player"})
-            team_cell = row.find("td", {"data-stat": "team"})
-            pos_cell = row.find("td", {"data-stat": "pos"})
+            name_cell = row.find("th")
+            if not name_cell:
+                continue
+                
+            name = name_cell.text.strip()
+            cols = row.find_all("td")
 
-            if name_cell:
-                players.append({
-                    "name": name_cell.text.strip(),
-                    "team": team_cell.text.strip() if team_cell else "N/A",
-                    "position": pos_cell.text.strip() if pos_cell else "N/A"
-                })
+            players.append({
+                "name": name,
+                "team": cols[2].text.strip() if len(cols) > 2 else "Unknown",
+                "position": cols[1].text.strip() if len(cols) > 1 else "N/A"
+            })
+
         return players
+
     except Exception as e:
-        return [{"error": f"Scraping failed: {str(e)}"}]
+        return [{"error": str(e)}]
