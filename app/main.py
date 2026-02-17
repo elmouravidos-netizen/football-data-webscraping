@@ -62,7 +62,8 @@ try:
     players = []
 
     table = soup.find("table")
-    rows = table.find("tbody").find_all("tr")
+    tbody = table.find("tbody")
+    rows = tbody.find_all("tr")
 
     for row in rows[:20]:
         player = row.find("th").text.strip()
