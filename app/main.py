@@ -1,89 +1,66 @@
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from bs4 import BeautifulSoup, Comment  # Added Comment import
+from datetime import date
+import os
 
 app = FastAPI()
 
-# Enable CORS for your React Frontend
+# Match your React frontend origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# 2026 Bypass Headers
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Referer": "https://www.sofascore.com",
+    "Origin": "https://www.sofascore.com"
+}
+
 @app.get("/")
 def home():
-    return {"status": "API is running", "date": "2026-02-17"}
-
-@app.get("/players")
-def get_players():
-    return [
-        {"name": "Lionel Messi", "team": "Inter Miami"},
-        {"name": "Cristiano Ronaldo", "team": "Al Nassr"},
-        {"name": "Kylian Mbappe", "team": "Real Madrid"}
-    ]
+    return {"status": "API Active", "date": date.today().isoformat()}
 
 @app.get("/matches")
-def get_matches():
-    return [
-        {"home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills", "score": "27-24", "date": "2026-02-10"},
-        {"home_team": "Dallas Cowboys", "away_team": "Philadelphia Eagles", "score": "21-17", "date": "2026-02-09"},
-        {"home_team": "San Francisco 49ers", "away_team": "Green Bay Packers", "score": "30-14", "date": "2026-02-08"}
-    ]
-
-@app.get("/realplayers")
-def real_players():
-    # ALL code below is now correctly indented
-    url = "https://fbref.com/en/comps/21/stats/NFL-Stats"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
+def get_live_results():
+    """Fetches real football matches and scores for today."""
+    today = date.today().isoformat()
+    # Official SofaScore internal API for daily events
+    url = f"https://api.sofascore.com{today}"
+    
     try:
-        r = requests.get(url, headers=headers, timeout=20)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # FBref hides tables inside comments to stop scrapers
-        comments = soup.find_all(string=lambda text: isinstance(text, Comment))
-
-        table = None
-        for comment in comments:
-            if "table" in comment:
-                comment_soup = BeautifulSoup(comment, "html.parser")
-                table = comment_soup.find("table")
-                if table:
-                    break
-
-        if not table:
-            # Fallback: check if the table is NOT commented out
-            table = soup.find("table")
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        
+        cleaned_matches = []
+        for event in data.get("events", []):
+            # Extracting logos using SofaScore's image CDN
+            home_id = event.get("homeTeam", {}).get("id")
+            away_id = event.get("awayTeam", {}).get("id")
             
-        if not table:
-            return [{"error": "Still no table found"}]
-
-        players = []
-        rows = table.find("tbody").find_all("tr")
-
-        for row in rows[:25]:
-            # Skip rows that are just headers
-            if "thead" in row.get("class", []):
-                continue
-                
-            name_cell = row.find("th")
-            if not name_cell:
-                continue
-                
-            name = name_cell.text.strip()
-            cols = row.find_all("td")
-
-            players.append({
-                "name": name,
-                "team": cols[2].text.strip() if len(cols) > 2 else "Unknown",
-                "position": cols[1].text.strip() if len(cols) > 1 else "N/A"
+            cleaned_matches.append({
+                "id": event.get("id"),
+                "league": event.get("tournament", {}).get("name"),
+                "home_team": event.get("homeTeam", {}).get("name"),
+                "away_team": event.get("awayTeam", {}).get("name"),
+                "home_score": event.get("homeScore", {}).get("current", 0),
+                "away_score": event.get("awayScore", {}).get("current", 0),
+                "status": event.get("status", {}).get("description"),
+                "home_logo": f"https://api.sofascore.app{home_id}/image",
+                "away_logo": f"https://api.sofascore.app{away_id}/image"
             })
-
-        return players
+        return cleaned_matches
 
     except Exception as e:
-        return [{"error": str(e)}]
+        return {"error": f"Scraper failed: {str(e)}"}
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
