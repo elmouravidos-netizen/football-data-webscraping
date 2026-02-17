@@ -3,48 +3,43 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import date
 import os
+import uvicorn
 
-app = FastAPI()
+app = FastAPI(title="Multi-Sport API (NFL & Football)")
 
-# Enable CORS for your React app
+# 1. CORS Setup for your React App
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=True, 
+    allow_methods=["*"], 
     allow_headers=["*"],
 )
 
-# Essential headers to avoid being blocked in 2026
+# 2. 2026 Bypass Headers (Crucial for SofaScore)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://www.sofascore.com/",
+    "Referer": "https://www.sofascore.com",
     "Origin": "https://www.sofascore.com"
 }
 
 @app.get("/")
-def home():
-    return {"status": "API Active", "date": date.today().isoformat()}
+def health():
+    return {"status": "Active", "sports": ["NFL", "Football"], "date": date.today().isoformat()}
 
-@app.get("/matches")
-def get_live_results():
-    """Fetches real football matches and scores for today, Feb 17, 2026."""
+# --- SECTION 1: FOOTBALL (SOCCER) ---
+
+@app.get("/football/matches")
+def get_football_matches():
+    """Fetches real-time soccer results for today."""
     today = date.today().isoformat()
-    # Corrected URL structure with a slash after the domain
-    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{today}"
-    
+    url = f"https://api.sofascore.com{today}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
         data = r.json()
-        
-        cleaned_matches = []
-        # Process events from the API response
+        matches = []
         for event in data.get("events", []):
-            home_id = event.get("homeTeam", {}).get("id")
-            away_id = event.get("awayTeam", {}).get("id")
-            
-            cleaned_matches.append({
+            matches.append({
                 "id": event.get("id"),
                 "league": event.get("tournament", {}).get("name"),
                 "home_team": event.get("homeTeam", {}).get("name"),
@@ -52,15 +47,61 @@ def get_live_results():
                 "home_score": event.get("homeScore", {}).get("current", 0),
                 "away_score": event.get("awayScore", {}).get("current", 0),
                 "status": event.get("status", {}).get("description"),
-                "home_logo": f"https://api.sofascore.app{home_id}/image",
-                "away_logo": f"https://api.sofascore.app{away_id}/image"
+                "home_logo": f"https://api.sofascore.app{event['homeTeam']['id']}/image",
+                "away_logo": f"https://api.sofascore.app{event['awayTeam']['id']}/image"
             })
-        return cleaned_matches
+        return matches
+    except:
+        return {"error": "Failed to fetch matches"}
 
-    except Exception as e:
-        return {"error": f"Scraper failed: {str(e)}", "attempted_url": url}
+@app.get("/football/standings/premier-league")
+def get_pl_standings():
+    """Fetches Premier League Table using IDs from your screenshot (17 / 76986)."""
+    url = "https://api.sofascore.com"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        data = r.json()
+        # Navigate to the correct 'standings' index
+        rows = data.get("standings", [{}])[0].get("rows", [])
+        table = []
+        for row in rows:
+            table.append({
+                "rank": row.get("position"),
+                "team": row.get("team", {}).get("name"),
+                "logo": f"https://api.sofascore.app{row['team']['id']}/image",
+                "played": row.get("matches"),
+                "gd": row.get("scoresFor", 0) - row.get("scoresAgainst", 0),
+                "points": row.get("points")
+            })
+        return table
+    except:
+        return {"error": "Failed to fetch standings"}
+
+@app.get("/football/rankings")
+def get_fifa_rankings():
+    """Fetches Top 20 FIFA World Rankings."""
+    url = "https://api.sofascore.com"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        data = r.json()
+        return [{"rank": t.get("rowNumber"), "team": t.get("team", {}).get("name"), "points": t.get("points")} for t in data.get("rankings", [])[:20]]
+    except:
+        return {"error": "Failed to fetch rankings"}
+
+# --- SECTION 2: NFL (AMERICAN FOOTBALL) ---
+
+@app.get("/nfl/players")
+def get_nfl_players():
+    url = "https://site.web.api.espn.com"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        data = r.json()
+        return [{"name": a['athlete']['displayName'], "team": a['athlete'].get('team', {}).get('displayName', 'Free Agent')} for a in data.get("items", [])]
+    except:
+        return {"error": "Failed to fetch NFL players"}
+
+# --- RAILWAY RUNNER ---
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
