@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-# Match your React frontend origins
+# Enable CORS for your React app
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -15,10 +15,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2026 Bypass Headers
+# Essential headers to avoid being blocked in 2026
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
     "Origin": "https://www.sofascore.com"
 }
 
@@ -28,10 +28,10 @@ def home():
 
 @app.get("/matches")
 def get_live_results():
-    """Fetches real football matches and scores for today."""
+    """Fetches real football matches and scores for today, Feb 17, 2026."""
     today = date.today().isoformat()
-    # Official SofaScore internal API for daily events
-    url = f"https://api.sofascore.com{today}"
+    # Corrected URL structure with a slash after the domain
+    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{today}"
     
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -39,8 +39,8 @@ def get_live_results():
         data = r.json()
         
         cleaned_matches = []
+        # Process events from the API response
         for event in data.get("events", []):
-            # Extracting logos using SofaScore's image CDN
             home_id = event.get("homeTeam", {}).get("id")
             away_id = event.get("awayTeam", {}).get("id")
             
@@ -58,7 +58,7 @@ def get_live_results():
         return cleaned_matches
 
     except Exception as e:
-        return {"error": f"Scraper failed: {str(e)}"}
+        return {"error": f"Scraper failed: {str(e)}", "attempted_url": url}
 
 if __name__ == "__main__":
     import uvicorn
