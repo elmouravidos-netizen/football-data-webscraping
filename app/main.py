@@ -51,24 +51,31 @@ def get_matches():
 
 @app.get("/realplayers")
 def real_players():
-    url = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes?limit=20"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        players = []
-        
-        # ESPN API uses 'items' or 'athletes' depending on the exact endpoint
-        items = data.get("items", [])
-        
-        for athlete in items:
-            player_info = athlete.get("athlete", {})
-            players.append({
-                "name": player_info.get("displayName"),
-                "position": player_info.get("position", {}).get("abbreviation", "N/A"),
-                "team": player_info.get("team", {}).get("displayName", "Free Agent")
-            })
-        return players
-    except Exception as e:
-        return [{"error": str(e)}]
+url = "https://fbref.com/en/comps/21/stats/NFL-Stats"
+headers = {"User-Agent": "Mozilla/5.0"}
+
+```
+try:
+    r = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    players = []
+
+    table = soup.find("table")
+    rows = table.find("tbody").find_all("tr")
+
+    for row in rows[:20]:
+        player = row.find("th").text.strip()
+        cols = row.find_all("td")
+
+        players.append({
+            "name": player,
+            "team": cols[2].text.strip() if len(cols) > 2 else "Unknown",
+            "position": cols[1].text.strip() if len(cols) > 1 else "N/A"
+        })
+
+    return players
+
+except Exception as e:
+    return [{"error": str(e)}]
+```
