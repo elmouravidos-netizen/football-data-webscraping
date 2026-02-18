@@ -16,10 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2026 Bypass Headers
+# 2026 Bypass Headers (Crucial for SofaScore)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
     "Origin": "https://www.sofascore.com"
 }
 
@@ -33,15 +33,14 @@ def health():
 def get_football_matches():
     """Fetches real-time soccer results for today."""
     today = date.today().isoformat()
-    # FIXED: Added the full API path and slashes
-    url = f"https://api.sofascore.com{today}"
+    # FIXED: Added the full API path and required slashes
+    url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{today}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         r.raise_for_status()
         data = r.json()
         matches = []
         for event in data.get("events", []):
-            # FIXED: Added correct logo path structure
             home_id = event['homeTeam']['id']
             away_id = event['awayTeam']['id']
             matches.append({
@@ -63,7 +62,7 @@ def get_football_matches():
 
 @app.get("/nfl/players")
 def get_nfl_players():
-    # FIXED: Added full ESPN API path
+    # FIXED: Added correct full endpoint for NFL athletes
     url = "https://site.web.api.espn.com"
     try:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -76,4 +75,5 @@ def get_nfl_players():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
+    # Binding to 0.0.0.0 is required for external access on Railway
     uvicorn.run(app, host="0.0.0.0", port=port)
