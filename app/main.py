@@ -7,16 +7,17 @@ import uvicorn
 
 app = FastAPI(title="Multi-Sport API (NFL & Football)")
 
-# 1. CORS Setup for your React App
+# --- PROFESSIONAL CORS CONFIGURATION ---
+# This allows your Vercel app and local testing to communicate with Railway
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True, 
+    allow_origins=["*"],  # Allows all domains to connect (Best for development/Vercel)
+    allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"],
 )
 
-# 2. 2026 Bypass Headers (Crucial for SofaScore)
+# 2026 Bypass Headers (Crucial for SofaScore)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://www.sofascore.com",
@@ -35,7 +36,8 @@ def get_football_matches():
     today = date.today().isoformat()
     url = f"https://api.sofascore.com{today}"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
         data = r.json()
         matches = []
         for event in data.get("events", []):
@@ -51,17 +53,17 @@ def get_football_matches():
                 "away_logo": f"https://api.sofascore.app{event['awayTeam']['id']}/image"
             })
         return matches
-    except:
-        return {"error": "Failed to fetch matches"}
+    except Exception as e:
+        return {"error": f"Match fetch failed: {str(e)}"}
 
 @app.get("/football/standings/premier-league")
 def get_pl_standings():
-    """Fetches Premier League Table using IDs from your screenshot (17 / 76986)."""
+    """Fetches Premier League Table (ID 17 / Season 76986)."""
     url = "https://api.sofascore.com"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
         data = r.json()
-        # Navigate to the correct 'standings' index
         rows = data.get("standings", [{}])[0].get("rows", [])
         table = []
         for row in rows:
@@ -74,21 +76,10 @@ def get_pl_standings():
                 "points": row.get("points")
             })
         return table
-    except:
-        return {"error": "Failed to fetch standings"}
+    except Exception as e:
+        return {"error": f"Standings fetch failed: {str(e)}"}
 
-@app.get("/football/rankings")
-def get_fifa_rankings():
-    """Fetches Top 20 FIFA World Rankings."""
-    url = "https://api.sofascore.com"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        data = r.json()
-        return [{"rank": t.get("rowNumber"), "team": t.get("team", {}).get("name"), "points": t.get("points")} for t in data.get("rankings", [])[:20]]
-    except:
-        return {"error": "Failed to fetch rankings"}
-
-# --- SECTION 2: NFL (AMERICAN FOOTBALL) ---
+# --- SECTION 2: NFL ---
 
 @app.get("/nfl/players")
 def get_nfl_players():
@@ -100,8 +91,9 @@ def get_nfl_players():
     except:
         return {"error": "Failed to fetch NFL players"}
 
-# --- RAILWAY RUNNER ---
+# --- RAILWAY DEPLOYMENT SETUP ---
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
+    # Using 0.0.0.0 is required for Railway to expose the port to the internet
     uvicorn.run(app, host="0.0.0.0", port=port)
