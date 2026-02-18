@@ -56,28 +56,32 @@ def get_football_matches():
     except Exception as e:
         return {"error": f"Match fetch failed: {str(e)}"}
 
-@app.get("/football/standings/premier-league")
-def get_pl_standings():
-    """Fetches Premier League Table (ID 17 / Season 76986)."""
-    url = "https://api.sofascore.com"
+@app.get("/football/matches")
+def get_football_matches():
+    """Fetches real-time soccer results for today."""
+    today = date.today().isoformat()
+    # FIXED URL: Added a slash '/' after .com
+    url = f"https://api.sofascore.com{today}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         r.raise_for_status()
         data = r.json()
-        rows = data.get("standings", [{}])[0].get("rows", [])
-        table = []
-        for row in rows:
-            table.append({
-                "rank": row.get("position"),
-                "team": row.get("team", {}).get("name"),
-                "logo": f"https://api.sofascore.app{row['team']['id']}/image",
-                "played": row.get("matches"),
-                "gd": row.get("scoresFor", 0) - row.get("scoresAgainst", 0),
-                "points": row.get("points")
+        matches = []
+        for event in data.get("events", []):
+            matches.append({
+                "id": event.get("id"),
+                "league": event.get("tournament", {}).get("name"),
+                "home_team": event.get("homeTeam", {}).get("name"),
+                "away_team": event.get("awayTeam", {}).get("name"),
+                "home_score": event.get("homeScore", {}).get("current", 0),
+                "away_score": event.get("awayScore", {}).get("current", 0),
+                "status": event.get("status", {}).get("description"),
+                "home_logo": f"https://api.sofascore.app{event['homeTeam']['id']}/image",
+                "away_logo": f"https://api.sofascore.app{event['awayTeam']['id']}/image"
             })
-        return table
+        return matches
     except Exception as e:
-        return {"error": f"Standings fetch failed: {str(e)}"}
+        return {"error": f"Match fetch failed: {str(e)}"}
 
 # --- SECTION 2: NFL ---
 
