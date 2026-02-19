@@ -53,6 +53,7 @@ def get_football_matches():
                 "status": event.get("status", {}).get("description"),
                 "home_logo": f"https://api.sofascore.app{home_id}/image",
                 "away_logo": f"https://api.sofascore.app{away_id}/image"
+                
             })
         return matches
     except Exception as e:
