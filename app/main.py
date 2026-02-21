@@ -20,8 +20,8 @@ app.add_middleware(
 )
 
 redis = Redis(
-    url=os.environ.get("UPSTASH_REDIS_REST_URL", ""),
-    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN", ""),
+    url=os.environ.get("KV_REST_API_URL", ""),
+    token=os.environ.get("KV_REST_API_TOKEN", ""),
 )
 
 SOFA_HEADERS = {
