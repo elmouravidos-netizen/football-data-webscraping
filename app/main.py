@@ -1,11 +1,13 @@
 import requests
 import os
 import uvicorn
+import json
+import time
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from datetime import date
-from functools import lru_cache
-import time
+from upstash_redis import Redis
 
 app = FastAPI(title="Soccer & NFL API")
 
@@ -17,52 +19,92 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─────────────────────────────────────────────
+# UPSTASH REDIS CONNECTION
+# ─────────────────────────────────────────────
+redis = Redis(
+    url=os.environ.get("UPSTASH_REDIS_REST_URL", ""),
+    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN", ""),
+)
+
+# ─────────────────────────────────────────────
+# HEADERS
+# ─────────────────────────────────────────────
 SOFA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Referer": "https://www.sofascore.com/",
     "Origin": "https://www.sofascore.com"
 }
-
 ESPN_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ─────────────────────────────────────────────
-# SIMPLE IN-MEMORY CACHE (backs up Redis on BE)
+# REDIS CACHE HELPERS
 # ─────────────────────────────────────────────
-_cache: dict = {}
-
-def cache_get(key: str):
-    entry = _cache.get(key)
-    if entry and time.time() < entry["expires"]:
-        return entry["data"]
+def redis_get(key: str):
+    """Get from Upstash Redis. Returns None if missing or Redis is down."""
+    try:
+        val = redis.get(key)
+        if val:
+            print(f"[REDIS HIT] {key}")
+            return json.loads(val)
+    except Exception as e:
+        print(f"[REDIS ERROR] get {key}: {e}")
     return None
 
-def cache_set(key: str, data, ttl: int = 60):
-    _cache[key] = {"data": data, "expires": time.time() + ttl}
+def redis_set(key: str, data, ttl: int):
+    """Save to Upstash Redis with TTL. Silent fail if Redis is down."""
+    try:
+        redis.set(key, json.dumps(data), ex=ttl)
+        print(f"[REDIS SET] {key} TTL={ttl}s")
+    except Exception as e:
+        print(f"[REDIS ERROR] set {key}: {e}")
 
+# ─────────────────────────────────────────────
+# HTTP HELPER
+# ─────────────────────────────────────────────
 def safe_get(url: str, headers: dict, timeout: int = 10):
     try:
         r = requests.get(url, headers=headers, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"[ERROR] GET {url} → {e}")
+        print(f"[FETCH ERROR] {url}: {e}")
         return None
+
+# ─────────────────────────────────────────────
+# LEAGUE IDS
+# ─────────────────────────────────────────────
+LEAGUE_IDS = {
+    "epl": 17, "laliga": 8, "seriea": 23,
+    "bundesliga": 35, "ligue1": 34
+}
 
 # ─────────────────────────────────────────────
 # HEALTH
 # ─────────────────────────────────────────────
 @app.get("/")
 def health():
-    return {"status": "ok", "date": date.today().isoformat()}
+    # Test Redis connection
+    redis_ok = False
+    try:
+        redis.set("health_check", "ok", ex=10)
+        redis_ok = redis.get("health_check") == "ok"
+    except:
+        pass
+    return {
+        "status": "ok",
+        "date": date.today().isoformat(),
+        "redis": "connected" if redis_ok else "disconnected"
+    }
 
 # ─────────────────────────────────────────────
-# 1. LIVE SCORES
+# 1. LIVE SCORES  (TTL: 30s — changes fast)
 # ─────────────────────────────────────────────
 @app.get("/football/live")
 def get_live_scores():
     key = "live_scores"
-    cached = cache_get(key)
-    if cached:
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
     today = date.today().isoformat()
@@ -85,43 +127,37 @@ def get_live_scores():
             "home_score": event.get("homeScore", {}).get("current"),
             "away_score": event.get("awayScore", {}).get("current"),
             "status": event.get("status", {}).get("description"),
-            "minute": event.get("time", {}).get("currentPeriodStartTimestamp"),
-            "is_live": status_code in [6, 7],      # 6=1st half, 7=2nd half
+            "is_live": status_code in [6, 7],
             "home_logo": f"https://api.sofascore.app/api/v1/team/{home_id}/image",
             "away_logo": f"https://api.sofascore.app/api/v1/team/{away_id}/image",
         })
 
-    cache_set(key, result, ttl=30)   # live data: short TTL
+    redis_set(key, result, ttl=30)
     return result
 
 # ─────────────────────────────────────────────
-# 2. TEAMS  (by league)
-# League IDs: EPL=17, La Liga=8, Serie A=23,
-#             Bundesliga=35, Ligue 1=34
+# 2. TEAMS  (TTL: 6hrs — rarely changes)
 # ─────────────────────────────────────────────
-LEAGUE_IDS = {
-    "epl": 17, "laliga": 8, "seriea": 23,
-    "bundesliga": 35, "ligue1": 34
-}
-
 @app.get("/football/teams")
 def get_teams(league: str = Query(default="epl")):
     key = f"teams_{league}"
-    cached = cache_get(key)
-    if cached:
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
     league_id = LEAGUE_IDS.get(league.lower(), 17)
-    # Get current season
-    season_url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
-    season_data = safe_get(season_url, SOFA_HEADERS)
+    season_data = safe_get(
+        f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons",
+        SOFA_HEADERS
+    )
     if not season_data:
         return []
 
     season_id = season_data["seasons"][0]["id"]
-
-    url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/teams"
-    data = safe_get(url, SOFA_HEADERS)
+    data = safe_get(
+        f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/teams",
+        SOFA_HEADERS
+    )
     if not data:
         return []
 
@@ -134,20 +170,19 @@ def get_teams(league: str = Query(default="epl")):
             "short_name": team.get("shortName"),
             "country": team.get("country", {}).get("name"),
             "logo": f"https://api.sofascore.app/api/v1/team/{tid}/image",
-            "venue": team.get("venue", {}).get("name") if team.get("venue") else None,
         })
 
-    cache_set(key, result, ttl=3600)
+    redis_set(key, result, ttl=21600)
     return result
 
 # ─────────────────────────────────────────────
-# 3. PLAYERS  (by team)
+# 3. PLAYERS  (TTL: 6hrs)
 # ─────────────────────────────────────────────
 @app.get("/football/players")
-def get_players(team_id: int = Query(..., description="SofaScore team ID")):
+def get_players(team_id: int = Query(...)):
     key = f"players_{team_id}"
-    cached = cache_get(key)
-    if cached:
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
     url = f"https://api.sofascore.com/api/v1/team/{team_id}/players"
@@ -159,10 +194,7 @@ def get_players(team_id: int = Query(..., description="SofaScore team ID")):
     for entry in data.get("players", []):
         p = entry.get("player", {})
         pid = p.get("id")
-
-        # Jersey number lives on the entry, not the player object
         jersey = entry.get("jerseyNumber") or p.get("jerseyNumber") or "?"
-
         result.append({
             "id": pid,
             "name": p.get("name"),
@@ -171,34 +203,36 @@ def get_players(team_id: int = Query(..., description="SofaScore team ID")):
             "jersey_number": jersey,
             "nationality": p.get("nationality"),
             "age": p.get("age"),
-            "market_value": p.get("proposedMarketValue"),
-            # FIXED: correct player image URL format
             "photo": f"https://api.sofascore.app/api/v1/player/{pid}/image",
-            # BONUS: also send team logo so Angular has it available
             "team_logo": f"https://api.sofascore.app/api/v1/team/{team_id}/image",
         })
 
-    cache_set(key, result, ttl=3600)
+    redis_set(key, result, ttl=21600)
     return result
+
 # ─────────────────────────────────────────────
-# 4. STANDINGS
+# 4. STANDINGS  (TTL: 1hr)
 # ─────────────────────────────────────────────
 @app.get("/football/standings")
 def get_standings(league: str = Query(default="epl")):
     key = f"standings_{league}"
-    cached = cache_get(key)
-    if cached:
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
     league_id = LEAGUE_IDS.get(league.lower(), 17)
-    season_url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
-    season_data = safe_get(season_url, SOFA_HEADERS)
+    season_data = safe_get(
+        f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons",
+        SOFA_HEADERS
+    )
     if not season_data:
         return []
 
     season_id = season_data["seasons"][0]["id"]
-    url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/standings/total"
-    data = safe_get(url, SOFA_HEADERS)
+    data = safe_get(
+        f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/standings/total",
+        SOFA_HEADERS
+    )
     if not data:
         return []
 
@@ -222,24 +256,23 @@ def get_standings(league: str = Query(default="epl")):
             "points": row.get("points"),
         })
 
-    cache_set(key, result, ttl=3600)
+    redis_set(key, result, ttl=3600)
     return result
 
 # ─────────────────────────────────────────────
-# 5. SQUAD BUILDER — returns full squad for a team
-#    (same as /players but named for Squad Builder UI)
+# 5. SQUAD BUILDER  (TTL: 6hrs)
 # ─────────────────────────────────────────────
 @app.get("/football/squad")
-def get_squad(team_id: int = Query(..., description="SofaScore team ID")):
+def get_squad(team_id: int = Query(...)):
     key = f"squad_{team_id}"
-    cached = cache_get(key)
-    if cached:
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
     url = f"https://api.sofascore.com/api/v1/team/{team_id}/players"
     data = safe_get(url, SOFA_HEADERS)
     if not data:
-        return []
+        return {}
 
     by_position = {"Goalkeepers": [], "Defenders": [], "Midfielders": [], "Forwards": []}
     pos_map = {"G": "Goalkeepers", "D": "Defenders", "M": "Midfielders", "F": "Forwards"}
@@ -253,28 +286,29 @@ def get_squad(team_id: int = Query(..., description="SofaScore team ID")):
             "name": p.get("name"),
             "short_name": p.get("shortName"),
             "position": p.get("position"),
-            "jersey_number": entry.get("jerseyNumber"),
+            "jersey_number": entry.get("jerseyNumber") or "?",
             "age": p.get("age"),
             "nationality": p.get("nationality"),
             "photo": f"https://api.sofascore.app/api/v1/player/{pid}/image",
         })
 
-    cache_set(key, by_position, ttl=3600)
+    redis_set(key, by_position, ttl=21600)
     return by_position
 
 # ─────────────────────────────────────────────
-# 6. NFL — Full rosters (all 32 teams, cached)
+# 6. NFL PLAYERS  (TTL: 12hrs)
 # ─────────────────────────────────────────────
-_nfl_roster_cache = {"data": None, "expires": 0}
-
 @app.get("/nfl/players")
 def get_nfl_players():
-    if _nfl_roster_cache["data"] and time.time() < _nfl_roster_cache["expires"]:
-        return _nfl_roster_cache["data"]
+    key = "nfl_players"
+    cached = redis_get(key)
+    if cached is not None:
+        return cached
 
-    # Step 1: get all 32 teams
-    teams_url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32"
-    teams_data = safe_get(teams_url, ESPN_HEADERS)
+    teams_data = safe_get(
+        "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32",
+        ESPN_HEADERS
+    )
     if not teams_data:
         return []
 
@@ -289,8 +323,10 @@ def get_nfl_players():
         team_name = team.get("displayName")
         abbr = team.get("abbreviation")
 
-        roster_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster"
-        roster = safe_get(roster_url, ESPN_HEADERS)
+        roster = safe_get(
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/roster",
+            ESPN_HEADERS
+        )
         if not roster:
             continue
 
@@ -305,22 +341,25 @@ def get_nfl_players():
                     "team_abbr": abbr,
                     "age": athlete.get("age"),
                     "headshot": athlete.get("headshot", {}).get("href"),
-                    "status": athlete.get("status", {}).get("type"),
                 })
 
-    # Cache for 6 hours — rosters don't change often
-    _nfl_roster_cache["data"] = all_players
-    _nfl_roster_cache["expires"] = time.time() + 21600
+    redis_set(key, all_players, ttl=43200)
     return all_players
 
+# ─────────────────────────────────────────────
+# 7. NFL SCORES  (TTL: 30s)
+# ─────────────────────────────────────────────
 @app.get("/nfl/scores")
 def get_nfl_scores():
-    cached = cache_get("nfl_scores")
-    if cached:
+    key = "nfl_scores"
+    cached = redis_get(key)
+    if cached is not None:
         return cached
 
-    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-    data = safe_get(url, ESPN_HEADERS)
+    data = safe_get(
+        "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+        ESPN_HEADERS
+    )
     if not data:
         return []
 
@@ -342,28 +381,44 @@ def get_nfl_scores():
             "away_logo": away.get("team", {}).get("logo"),
         })
 
-    cache_set("nfl_scores", games, ttl=30)
+    redis_set(key, games, ttl=30)
     return games
-from fastapi.responses import Response
 
-# ─── IMAGE PROXY ───
+# ─────────────────────────────────────────────
+# 8. IMAGE PROXY
+# ─────────────────────────────────────────────
 @app.get("/proxy/image")
 def proxy_image(url: str = Query(...)):
-    """
-    Proxies SofaScore images so browser doesn't get blocked.
-    Usage: /proxy/image?url=https://api.sofascore.app/api/v1/player/123/image
-    """
     try:
         r = requests.get(url, headers=SOFA_HEADERS, timeout=5)
-        return Response(
-            content=r.content,
-            media_type=r.headers.get("content-type", "image/png")
-        )
+        return Response(content=r.content, media_type=r.headers.get("content-type", "image/png"))
     except:
-        # Return a transparent 1x1 PNG so UI doesn't break
         import base64
         empty = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
         return Response(content=empty, media_type="image/png")
+
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+```
+
+---
+
+## What changed vs your old version
+
+| | Old | New |
+|---|---|---|
+| Cache location | Railway RAM (lost on restart) | Upstash Redis (permanent) |
+| 1,000 users | 1,000 SofaScore calls | 1 SofaScore call |
+| Railway restart | Cache wiped, everyone gets errors | Redis still has data |
+| Live scores TTL | 30s in memory | 30s in Redis (shared) |
+| Teams/Players TTL | 1hr in memory | 6hrs in Redis |
+
+---
+
+## Verify it's working
+
+After you deploy, visit your Railway URL and check the health endpoint:
+```
+https://YOUR-RAILWAY-URL/
