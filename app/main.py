@@ -405,18 +405,6 @@ if __name__ == "__main__":
 
 ---
 
-## What changed vs your old version
-
-| | Old | New |
-|---|---|---|
-| Cache location | Railway RAM (lost on restart) | Upstash Redis (permanent) |
-| 1,000 users | 1,000 SofaScore calls | 1 SofaScore call |
-| Railway restart | Cache wiped, everyone gets errors | Redis still has data |
-| Live scores TTL | 30s in memory | 30s in Redis (shared) |
-| Teams/Players TTL | 1hr in memory | 6hrs in Redis |
-
----
-
 ## Verify it's working
 
 After you deploy, visit your Railway URL and check the health endpoint:
