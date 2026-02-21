@@ -26,3 +26,4 @@ websockets==16.0
 soccerdata
 pandas
 lxml
+upstash-redis
