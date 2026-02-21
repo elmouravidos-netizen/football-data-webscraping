@@ -338,7 +338,27 @@ def get_nfl_scores():
 
     cache_set("nfl_scores", games, ttl=30)
     return games
+    
+from fastapi.responses import Response
 
+@app.get("/proxy/image")
+def proxy_image(url: str = Query(...)):
+    """
+    Proxies SofaScore images so browser doesn't get blocked.
+    Usage: /proxy/image?url=https://api.sofascore.app/api/v1/player/123/image
+    """
+    try:
+        r = requests.get(url, headers=SOFA_HEADERS, timeout=5)
+        return Response(
+            content=r.content,
+            media_type=r.headers.get("content-type", "image/png")
+        )
+    except:
+        # Return a transparent 1x1 PNG so UI doesn't break
+        import base64
+        empty = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        return Response(content=empty, media_type="image/png")
+        
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
