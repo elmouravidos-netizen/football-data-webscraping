@@ -369,8 +369,20 @@ def get_nfl_scores():
 
 @app.get("/proxy/image")
 def proxy_image(url: str = Query(...)):
+    # Check Redis cache for images too
+    cache_key = f"img_{url}"
+    cached = redis_get(cache_key)
+    if cached:
+        import base64
+        img_bytes = base64.b64decode(cached)
+        return Response(content=img_bytes, media_type="image/png")
+    
     try:
         r = requests.get(url, headers=SOFA_HEADERS, timeout=5)
+        # Cache image in Redis for 24 hours
+        import base64
+        encoded = base64.b64encode(r.content).decode()
+        redis_set(cache_key, encoded, ttl=86400)
         return Response(
             content=r.content,
             media_type=r.headers.get("content-type", "image/png")
