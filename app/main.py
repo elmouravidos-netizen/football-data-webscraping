@@ -19,17 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────
-# UPSTASH REDIS CONNECTION
-# ─────────────────────────────────────────────
 redis = Redis(
     url=os.environ.get("UPSTASH_REDIS_REST_URL", ""),
     token=os.environ.get("UPSTASH_REDIS_REST_TOKEN", ""),
 )
 
-# ─────────────────────────────────────────────
-# HEADERS
-# ─────────────────────────────────────────────
 SOFA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Referer": "https://www.sofascore.com/",
@@ -37,11 +31,16 @@ SOFA_HEADERS = {
 }
 ESPN_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# ─────────────────────────────────────────────
-# REDIS CACHE HELPERS
-# ─────────────────────────────────────────────
+LEAGUE_IDS = {
+    "epl": 17,
+    "laliga": 8,
+    "seriea": 23,
+    "bundesliga": 35,
+    "ligue1": 34
+}
+
+
 def redis_get(key: str):
-    """Get from Upstash Redis. Returns None if missing or Redis is down."""
     try:
         val = redis.get(key)
         if val:
@@ -51,17 +50,15 @@ def redis_get(key: str):
         print(f"[REDIS ERROR] get {key}: {e}")
     return None
 
+
 def redis_set(key: str, data, ttl: int):
-    """Save to Upstash Redis with TTL. Silent fail if Redis is down."""
     try:
         redis.set(key, json.dumps(data), ex=ttl)
         print(f"[REDIS SET] {key} TTL={ttl}s")
     except Exception as e:
         print(f"[REDIS ERROR] set {key}: {e}")
 
-# ─────────────────────────────────────────────
-# HTTP HELPER
-# ─────────────────────────────────────────────
+
 def safe_get(url: str, headers: dict, timeout: int = 10):
     try:
         r = requests.get(url, headers=headers, timeout=timeout)
@@ -71,20 +68,9 @@ def safe_get(url: str, headers: dict, timeout: int = 10):
         print(f"[FETCH ERROR] {url}: {e}")
         return None
 
-# ─────────────────────────────────────────────
-# LEAGUE IDS
-# ─────────────────────────────────────────────
-LEAGUE_IDS = {
-    "epl": 17, "laliga": 8, "seriea": 23,
-    "bundesliga": 35, "ligue1": 34
-}
 
-# ─────────────────────────────────────────────
-# HEALTH
-# ─────────────────────────────────────────────
 @app.get("/")
 def health():
-    # Test Redis connection
     redis_ok = False
     try:
         redis.set("health_check", "ok", ex=10)
@@ -97,9 +83,7 @@ def health():
         "redis": "connected" if redis_ok else "disconnected"
     }
 
-# ─────────────────────────────────────────────
-# 1. LIVE SCORES  (TTL: 30s — changes fast)
-# ─────────────────────────────────────────────
+
 @app.get("/football/live")
 def get_live_scores():
     key = "live_scores"
@@ -135,9 +119,7 @@ def get_live_scores():
     redis_set(key, result, ttl=30)
     return result
 
-# ─────────────────────────────────────────────
-# 2. TEAMS  (TTL: 6hrs — rarely changes)
-# ─────────────────────────────────────────────
+
 @app.get("/football/teams")
 def get_teams(league: str = Query(default="epl")):
     key = f"teams_{league}"
@@ -175,9 +157,7 @@ def get_teams(league: str = Query(default="epl")):
     redis_set(key, result, ttl=21600)
     return result
 
-# ─────────────────────────────────────────────
-# 3. PLAYERS  (TTL: 6hrs)
-# ─────────────────────────────────────────────
+
 @app.get("/football/players")
 def get_players(team_id: int = Query(...)):
     key = f"players_{team_id}"
@@ -210,9 +190,7 @@ def get_players(team_id: int = Query(...)):
     redis_set(key, result, ttl=21600)
     return result
 
-# ─────────────────────────────────────────────
-# 4. STANDINGS  (TTL: 1hr)
-# ─────────────────────────────────────────────
+
 @app.get("/football/standings")
 def get_standings(league: str = Query(default="epl")):
     key = f"standings_{league}"
@@ -259,9 +237,7 @@ def get_standings(league: str = Query(default="epl")):
     redis_set(key, result, ttl=3600)
     return result
 
-# ─────────────────────────────────────────────
-# 5. SQUAD BUILDER  (TTL: 6hrs)
-# ─────────────────────────────────────────────
+
 @app.get("/football/squad")
 def get_squad(team_id: int = Query(...)):
     key = f"squad_{team_id}"
@@ -274,8 +250,18 @@ def get_squad(team_id: int = Query(...)):
     if not data:
         return {}
 
-    by_position = {"Goalkeepers": [], "Defenders": [], "Midfielders": [], "Forwards": []}
-    pos_map = {"G": "Goalkeepers", "D": "Defenders", "M": "Midfielders", "F": "Forwards"}
+    by_position = {
+        "Goalkeepers": [],
+        "Defenders": [],
+        "Midfielders": [],
+        "Forwards": []
+    }
+    pos_map = {
+        "G": "Goalkeepers",
+        "D": "Defenders",
+        "M": "Midfielders",
+        "F": "Forwards"
+    }
 
     for entry in data.get("players", []):
         p = entry.get("player", {})
@@ -295,9 +281,7 @@ def get_squad(team_id: int = Query(...)):
     redis_set(key, by_position, ttl=21600)
     return by_position
 
-# ─────────────────────────────────────────────
-# 6. NFL PLAYERS  (TTL: 12hrs)
-# ─────────────────────────────────────────────
+
 @app.get("/nfl/players")
 def get_nfl_players():
     key = "nfl_players"
@@ -346,9 +330,7 @@ def get_nfl_players():
     redis_set(key, all_players, ttl=43200)
     return all_players
 
-# ─────────────────────────────────────────────
-# 7. NFL SCORES  (TTL: 30s)
-# ─────────────────────────────────────────────
+
 @app.get("/nfl/scores")
 def get_nfl_scores():
     key = "nfl_scores"
@@ -384,30 +366,23 @@ def get_nfl_scores():
     redis_set(key, games, ttl=30)
     return games
 
-# ─────────────────────────────────────────────
-# 8. IMAGE PROXY
-# ─────────────────────────────────────────────
+
 @app.get("/proxy/image")
 def proxy_image(url: str = Query(...)):
     try:
         r = requests.get(url, headers=SOFA_HEADERS, timeout=5)
-        return Response(content=r.content, media_type=r.headers.get("content-type", "image/png"))
+        return Response(
+            content=r.content,
+            media_type=r.headers.get("content-type", "image/png")
+        )
     except:
         import base64
-        empty = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        empty = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        )
         return Response(content=empty, media_type="image/png")
 
-# ─────────────────────────────────────────────
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-```
-
-Delete all of this from your file:
-```
-```
----
-## Verify it's working
-After you deploy, visit your Railway URL and check the health endpoint:
-```
-https://YOUR-RAILWAY-URL/
