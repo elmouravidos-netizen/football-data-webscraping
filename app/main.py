@@ -3,19 +3,11 @@ import os
 import uvicorn
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import Response
 from datetime import date
-from functools import lru_cache
+from contextlib import asynccontextmanager
 import time
-
-app = FastAPI(title="Soccer & NFL API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 SOFA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -25,9 +17,6 @@ SOFA_HEADERS = {
 
 ESPN_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# ─────────────────────────────────────────────
-# SIMPLE IN-MEMORY CACHE (backs up Redis on BE)
-# ─────────────────────────────────────────────
 _cache: dict = {}
 
 def cache_get(key: str):
@@ -48,16 +37,43 @@ def safe_get(url: str, headers: dict, timeout: int = 10):
         print(f"[ERROR] GET {url} → {e}")
         return None
 
-# ─────────────────────────────────────────────
-# HEALTH
-# ─────────────────────────────────────────────
+LEAGUE_IDS = {
+    "epl": 17, "laliga": 8, "seriea": 23,
+    "bundesliga": 35, "ligue1": 34
+}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    import threading
+    def warm_cache():
+        try:
+            print("[STARTUP] Warming cache...")
+            get_live_scores()
+            get_standings("epl")
+            get_teams("epl")
+            print("[STARTUP] Cache warmed successfully")
+        except Exception as e:
+            print(f"[STARTUP] Cache warm failed: {e}")
+    threading.Thread(target=warm_cache, daemon=True).start()
+    yield
+
+app = FastAPI(title="Soccer & NFL API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
 @app.get("/")
 def health():
     return {"status": "ok", "date": date.today().isoformat()}
 
-# ─────────────────────────────────────────────
-# 1. LIVE SCORES
-# ─────────────────────────────────────────────
+
 @app.get("/football/live")
 def get_live_scores():
     key = "live_scores"
@@ -86,23 +102,14 @@ def get_live_scores():
             "away_score": event.get("awayScore", {}).get("current"),
             "status": event.get("status", {}).get("description"),
             "minute": event.get("time", {}).get("currentPeriodStartTimestamp"),
-            "is_live": status_code in [6, 7],      # 6=1st half, 7=2nd half
+            "is_live": status_code in [6, 7],
             "home_logo": f"https://api.sofascore.app/api/v1/team/{home_id}/image",
             "away_logo": f"https://api.sofascore.app/api/v1/team/{away_id}/image",
         })
 
-    cache_set(key, result, ttl=30)   # live data: short TTL
+    cache_set(key, result, ttl=30)
     return result
 
-# ─────────────────────────────────────────────
-# 2. TEAMS  (by league)
-# League IDs: EPL=17, La Liga=8, Serie A=23,
-#             Bundesliga=35, Ligue 1=34
-# ─────────────────────────────────────────────
-LEAGUE_IDS = {
-    "epl": 17, "laliga": 8, "seriea": 23,
-    "bundesliga": 35, "ligue1": 34
-}
 
 @app.get("/football/teams")
 def get_teams(league: str = Query(default="epl")):
@@ -112,14 +119,12 @@ def get_teams(league: str = Query(default="epl")):
         return cached
 
     league_id = LEAGUE_IDS.get(league.lower(), 17)
-    # Get current season
     season_url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
     season_data = safe_get(season_url, SOFA_HEADERS)
     if not season_data:
         return []
 
     season_id = season_data["seasons"][0]["id"]
-
     url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/teams"
     data = safe_get(url, SOFA_HEADERS)
     if not data:
@@ -140,9 +145,7 @@ def get_teams(league: str = Query(default="epl")):
     cache_set(key, result, ttl=3600)
     return result
 
-# ─────────────────────────────────────────────
-# 3. PLAYERS  (by team)
-# ─────────────────────────────────────────────
+
 @app.get("/football/players")
 def get_players(team_id: int = Query(..., description="SofaScore team ID")):
     key = f"players_{team_id}"
@@ -159,12 +162,13 @@ def get_players(team_id: int = Query(..., description="SofaScore team ID")):
     for entry in data.get("players", []):
         p = entry.get("player", {})
         pid = p.get("id")
+        jersey = entry.get("jerseyNumber") or p.get("jerseyNumber") or "?"
         result.append({
             "id": pid,
             "name": p.get("name"),
             "short_name": p.get("shortName"),
             "position": p.get("position"),
-            "jersey_number": entry.get("jerseyNumber"),
+            "jersey_number": jersey,
             "nationality": p.get("nationality"),
             "age": p.get("age"),
             "market_value": p.get("proposedMarketValue"),
@@ -174,9 +178,7 @@ def get_players(team_id: int = Query(..., description="SofaScore team ID")):
     cache_set(key, result, ttl=3600)
     return result
 
-# ─────────────────────────────────────────────
-# 4. STANDINGS
-# ─────────────────────────────────────────────
+
 @app.get("/football/standings")
 def get_standings(league: str = Query(default="epl")):
     key = f"standings_{league}"
@@ -219,10 +221,7 @@ def get_standings(league: str = Query(default="epl")):
     cache_set(key, result, ttl=3600)
     return result
 
-# ─────────────────────────────────────────────
-# 5. SQUAD BUILDER — returns full squad for a team
-#    (same as /players but named for Squad Builder UI)
-# ─────────────────────────────────────────────
+
 @app.get("/football/squad")
 def get_squad(team_id: int = Query(..., description="SofaScore team ID")):
     key = f"squad_{team_id}"
@@ -247,7 +246,7 @@ def get_squad(team_id: int = Query(..., description="SofaScore team ID")):
             "name": p.get("name"),
             "short_name": p.get("shortName"),
             "position": p.get("position"),
-            "jersey_number": entry.get("jerseyNumber"),
+            "jersey_number": entry.get("jerseyNumber") or "?",
             "age": p.get("age"),
             "nationality": p.get("nationality"),
             "photo": f"https://api.sofascore.app/api/v1/player/{pid}/image",
@@ -256,9 +255,7 @@ def get_squad(team_id: int = Query(..., description="SofaScore team ID")):
     cache_set(key, by_position, ttl=3600)
     return by_position
 
-# ─────────────────────────────────────────────
-# 6. NFL — Full rosters (all 32 teams, cached)
-# ─────────────────────────────────────────────
+
 _nfl_roster_cache = {"data": None, "expires": 0}
 
 @app.get("/nfl/players")
@@ -266,7 +263,6 @@ def get_nfl_players():
     if _nfl_roster_cache["data"] and time.time() < _nfl_roster_cache["expires"]:
         return _nfl_roster_cache["data"]
 
-    # Step 1: get all 32 teams
     teams_url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32"
     teams_data = safe_get(teams_url, ESPN_HEADERS)
     if not teams_data:
@@ -302,10 +298,10 @@ def get_nfl_players():
                     "status": athlete.get("status", {}).get("type"),
                 })
 
-    # Cache for 6 hours — rosters don't change often
     _nfl_roster_cache["data"] = all_players
     _nfl_roster_cache["expires"] = time.time() + 21600
     return all_players
+
 
 @app.get("/nfl/scores")
 def get_nfl_scores():
@@ -338,15 +334,10 @@ def get_nfl_scores():
 
     cache_set("nfl_scores", games, ttl=30)
     return games
-    
-from fastapi.responses import Response
+
 
 @app.get("/proxy/image")
 def proxy_image(url: str = Query(...)):
-    """
-    Proxies SofaScore images so browser doesn't get blocked.
-    Usage: /proxy/image?url=https://api.sofascore.app/api/v1/player/123/image
-    """
     try:
         r = requests.get(url, headers=SOFA_HEADERS, timeout=5)
         return Response(
@@ -354,11 +345,13 @@ def proxy_image(url: str = Query(...)):
             media_type=r.headers.get("content-type", "image/png")
         )
     except:
-        # Return a transparent 1x1 PNG so UI doesn't break
         import base64
-        empty = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        empty = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        )
         return Response(content=empty, media_type="image/png")
-        
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
